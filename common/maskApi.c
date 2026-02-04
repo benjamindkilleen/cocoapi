@@ -74,6 +74,49 @@ void rleArea( const RLE *R, siz n, uint *a ) {
     a[i]=0; for( j=1; j<R[i].m; j+=2 ) a[i]+=R[i].cnts[j]; }
 }
 
+void rleIntersect( RLE *dt, RLE *gt, siz m, siz n, byte *iscrowd, uint *o ) {
+  siz g, d; BB db, gb;
+  db=malloc(sizeof(double)*m*4); rleToBbox(dt,db,m);
+  gb=malloc(sizeof(double)*n*4); rleToBbox(gt,gb,n);
+  double *bbo = malloc(sizeof(double)*m*n);
+  bbIou(db,gb,m,n,iscrowd,bbo); free(db); free(gb);
+  for( g=0; g<n; g++ ) for( d=0; d<m; d++ ) {
+    if(bbo[g*m+d]>0) {
+      if(dt[d].h!=gt[g].h || dt[d].w!=gt[g].w) { o[g*m+d]=0; continue; }
+      siz ka, kb, a, b; uint c, ca, cb, ct, i=0; int va, vb;
+      ca=dt[d].cnts[0]; ka=dt[d].m; va=vb=0;
+      cb=gt[g].cnts[0]; kb=gt[g].m; a=b=1; ct=1;
+      while( ct>0 ) {
+        c=umin(ca,cb); if(va&&vb) i+=c; ct=0;
+        ca-=c; if(!ca && a<ka) { ca=dt[d].cnts[a++]; va=!va; } ct+=ca;
+        cb-=c; if(!cb && b<kb) { cb=gt[g].cnts[b++]; vb=!vb; } ct+=cb;
+      }
+      o[g*m+d]=i;
+    } else { o[g*m+d]=0; }
+  }
+  free(bbo);
+}
+
+void rleUnion( RLE *dt, RLE *gt, siz m, siz n, byte *iscrowd, uint *o ) {
+  siz g, d; int crowd;
+  for( g=0; g<n; g++ ) {
+    crowd=iscrowd!=NULL && iscrowd[g];
+    for( d=0; d<m; d++ ) {
+      if(dt[d].h!=gt[g].h || dt[d].w!=gt[g].w) { o[g*m+d]=0; continue; }
+      siz ka, kb, a, b; uint c, ca, cb, ct, u=0; int va, vb;
+      ca=dt[d].cnts[0]; ka=dt[d].m; va=vb=0;
+      cb=gt[g].cnts[0]; kb=gt[g].m; a=b=1; ct=1;
+      while( ct>0 ) {
+        c=umin(ca,cb); if(va||vb) u+=c; ct=0;
+        ca-=c; if(!ca && a<ka) { ca=dt[d].cnts[a++]; va=!va; } ct+=ca;
+        cb-=c; if(!cb && b<kb) { cb=gt[g].cnts[b++]; vb=!vb; } ct+=cb;
+      }
+      if(crowd) rleArea(dt+d,1,&u);
+      o[g*m+d]=u;
+    }
+  }
+}
+
 void rleIou( RLE *dt, RLE *gt, siz m, siz n, byte *iscrowd, double *o ) {
   siz g, d; BB db, gb; int crowd;
   db=malloc(sizeof(double)*m*4); rleToBbox(dt,db,m);

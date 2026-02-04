@@ -1,0 +1,5 @@
+graft common
+include pyproject.toml
+include setup.py
+graft pycocotools
+global-exclude *.pyc

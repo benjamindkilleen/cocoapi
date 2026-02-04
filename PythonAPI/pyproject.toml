@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=18.0", "cython>=0.27.3", "numpy"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pycocotools-killeen"
+version = "2.0"
+authors = [
+    {name = "Piotr Dollar"},
+    {name = "Tsung-Yi Lin"},
+]
+description = "Official APIs for the MS-COCO dataset (modified)"
+dependencies = [
+    "setuptools>=18.0",
+    "cython>=0.27.3",
+    "matplotlib>=2.1.0",
+    "numpy"
+]
+requires-python = ">=3.7"
+
+[tool.setuptools]
+packages = ["pycocotools"]

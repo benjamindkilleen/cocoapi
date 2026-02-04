@@ -32,6 +32,12 @@ void rleMerge( const RLE *R, RLE *M, siz n, int intersect );
 /* Compute area of encoded masks. */
 void rleArea( const RLE *R, siz n, uint *a );
 
+/* Compute intersection between masks. */
+void rleIntersect( RLE *dt, RLE *gt, siz m, siz n, byte *iscrowd, uint *o );
+
+/* Compute union between masks. */
+void rleUnion( RLE *dt, RLE *gt, siz m, siz n, byte *iscrowd, uint *o );
+
 /* Compute intersection over union between masks. */
 void rleIou( RLE *dt, RLE *gt, siz m, siz n, byte *iscrowd, double *o );
 

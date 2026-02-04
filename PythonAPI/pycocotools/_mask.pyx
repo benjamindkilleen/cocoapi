@@ -43,6 +43,8 @@ cdef extern from "maskApi.h":
     void rleDecode( const RLE *R, byte *mask, siz n )
     void rleMerge( const RLE *R, RLE *M, siz n, int intersect )
     void rleArea( const RLE *R, siz n, uint *a )
+    void rleIntersect( RLE *dt, RLE *gt, siz m, siz n, byte *iscrowd, uint *o )
+    void rleUnion( RLE *dt, RLE *gt, siz m, siz n, byte *iscrowd, uint *o )
     void rleIou( RLE *dt, RLE *gt, siz m, siz n, byte *iscrowd, double *o )
     void bbIou( BB dt, BB gt, siz m, siz n, byte *iscrowd, double *o )
     void rleToBbox( const RLE *R, BB bb, siz n )
@@ -96,7 +98,7 @@ cdef class Masks:
         # Create a 1D array, and reshape it to fortran/Matlab column-major array
         ndarray = np.PyArray_SimpleNewFromData(1, shape, np.NPY_UINT8, self._mask).reshape((self._h, self._w, self._n), order='F')
         # The _mask allocated by Masks is now handled by ndarray
-        PyArray_ENABLEFLAGS(ndarray, np.NPY_OWNDATA)
+        PyArray_ENABLEFLAGS(ndarray, np.NPY_ARRAY_OWNDATA)
         return ndarray
 
 # internal conversion from Python RLEs object to compressed RLE format
@@ -164,7 +166,7 @@ def area(rleObjs):
     shape[0] = <np.npy_intp> Rs._n
     a = np.array((Rs._n, ), dtype=np.uint8)
     a = np.PyArray_SimpleNewFromData(1, shape, np.NPY_UINT32, _a)
-    PyArray_ENABLEFLAGS(a, np.NPY_OWNDATA)
+    PyArray_ENABLEFLAGS(a, np.NPY_ARRAY_OWNDATA)
     return a
 
 # iou computation. support function overload (RLEs-RLEs and bbox-bbox).
@@ -234,9 +236,123 @@ def iou( dt, gt, pyiscrowd ):
     iou = np.zeros((m*n, ), dtype=np.double)
     shape[0] = <np.npy_intp> m*n
     iou = np.PyArray_SimpleNewFromData(1, shape, np.NPY_DOUBLE, _iou)
-    PyArray_ENABLEFLAGS(iou, np.NPY_OWNDATA)
+    PyArray_ENABLEFLAGS(iou, np.NPY_ARRAY_OWNDATA)
     _iouFun(dt, gt, iscrowd, m, n, iou)
     return iou.reshape((m,n), order='F')
+
+def intersection( dt, gt, pyiscrowd ):
+    def _preproc(objs):
+        if len(objs) == 0:
+            return objs
+        if type(objs) == np.ndarray:
+            if len(objs.shape) == 1:
+                objs = objs.reshape((objs[0], 1))
+            # check if it's Nx4 bbox
+            if not len(objs.shape) == 2 or not objs.shape[1] == 4:
+                raise Exception('numpy ndarray input is only for *bounding boxes* and should have Nx4 dimension')
+            objs = objs.astype(np.double)
+        elif type(objs) == list:
+            # check if list is in box format and convert it to np.ndarray
+            isbox = np.all(np.array([(len(obj)==4) and ((type(obj)==list) or (type(obj)==np.ndarray)) for obj in objs]))
+            isrle = np.all(np.array([type(obj) == dict for obj in objs]))
+            if isbox:
+                objs = np.array(objs, dtype=np.double)
+                if len(objs.shape) == 1:
+                    objs = objs.reshape((1,objs.shape[0]))
+            elif isrle:
+                objs = _frString(objs)
+            else:
+                raise Exception('list input can be bounding box (Nx4) or RLEs ([RLE])')
+        else:
+            raise Exception('unrecognized type.  The following type: RLEs (rle), np.ndarray (box), and list (box) are supported.')
+        return objs
+    def _rleIntersect(RLEs dt, RLEs gt, np.ndarray[np.uint8_t, ndim=1] iscrowd, siz m, siz n, np.ndarray[np.uint32_t,  ndim=1] _o):
+        rleIntersect( <RLE*> dt._R, <RLE*> gt._R, m, n, <byte*> iscrowd.data, <uint*> _o.data )
+    def _len(obj):
+        cdef siz N = 0
+        if type(obj) == RLEs:
+            N = obj.n
+        elif len(obj)==0:
+            pass
+        elif type(obj) == np.ndarray:
+            N = obj.shape[0]
+        return N
+    cdef np.ndarray[np.uint8_t, ndim=1] iscrowd = np.array(pyiscrowd, dtype=np.uint8)
+    cdef siz m, n
+    dt = _preproc(dt)
+    gt = _preproc(gt)
+    m = _len(dt)
+    n = _len(gt)
+    if m == 0 or n == 0:
+        return []
+    if not (type(dt) == RLEs and type(gt) == RLEs):
+         raise Exception('The dt and gt must be RLEs for intersection computation')
+    cdef uint* _o = <uint*> 0
+    cdef np.npy_intp shape[1]
+    _o = <uint*> malloc(m*n* sizeof(uint))
+    o = np.zeros((m*n, ), dtype=np.uint32)
+    shape[0] = <np.npy_intp> m*n
+    o = np.PyArray_SimpleNewFromData(1, shape, np.NPY_UINT32, _o)
+    PyArray_ENABLEFLAGS(o, np.NPY_ARRAY_OWNDATA)
+    _rleIntersect(dt, gt, iscrowd, m, n, o)
+    return o.reshape((m,n), order='F')
+
+def union( dt, gt, pyiscrowd ):
+    def _preproc(objs):
+        if len(objs) == 0:
+            return objs
+        if type(objs) == np.ndarray:
+            if len(objs.shape) == 1:
+                objs = objs.reshape((objs[0], 1))
+            # check if it's Nx4 bbox
+            if not len(objs.shape) == 2 or not objs.shape[1] == 4:
+                raise Exception('numpy ndarray input is only for *bounding boxes* and should have Nx4 dimension')
+            objs = objs.astype(np.double)
+        elif type(objs) == list:
+            # check if list is in box format and convert it to np.ndarray
+            isbox = np.all(np.array([(len(obj)==4) and ((type(obj)==list) or (type(obj)==np.ndarray)) for obj in objs]))
+            isrle = np.all(np.array([type(obj) == dict for obj in objs]))
+            if isbox:
+                objs = np.array(objs, dtype=np.double)
+                if len(objs.shape) == 1:
+                    objs = objs.reshape((1,objs.shape[0]))
+            elif isrle:
+                objs = _frString(objs)
+            else:
+                raise Exception('list input can be bounding box (Nx4) or RLEs ([RLE])')
+        else:
+            raise Exception('unrecognized type.  The following type: RLEs (rle), np.ndarray (box), and list (box) are supported.')
+        return objs
+    def _rleUnion(RLEs dt, RLEs gt, np.ndarray[np.uint8_t, ndim=1] iscrowd, siz m, siz n, np.ndarray[np.uint32_t,  ndim=1] _o):
+        rleUnion( <RLE*> dt._R, <RLE*> gt._R, m, n, <byte*> iscrowd.data, <uint*> _o.data )
+    def _len(obj):
+        cdef siz N = 0
+        if type(obj) == RLEs:
+            N = obj.n
+        elif len(obj)==0:
+            pass
+        elif type(obj) == np.ndarray:
+            N = obj.shape[0]
+        return N
+    cdef np.ndarray[np.uint8_t, ndim=1] iscrowd = np.array(pyiscrowd, dtype=np.uint8)
+    cdef siz m, n
+    dt = _preproc(dt)
+    gt = _preproc(gt)
+    m = _len(dt)
+    n = _len(gt)
+    if m == 0 or n == 0:
+        return []
+    if not (type(dt) == RLEs and type(gt) == RLEs):
+         raise Exception('The dt and gt must be RLEs for union computation')
+    cdef uint* _o = <uint*> 0
+    cdef np.npy_intp shape[1]
+    _o = <uint*> malloc(m*n* sizeof(uint))
+    o = np.zeros((m*n, ), dtype=np.uint32)
+    shape[0] = <np.npy_intp> m*n
+    o = np.PyArray_SimpleNewFromData(1, shape, np.NPY_UINT32, _o)
+    PyArray_ENABLEFLAGS(o, np.NPY_ARRAY_OWNDATA)
+    _rleUnion(dt, gt, iscrowd, m, n, o)
+    return o.reshape((m,n), order='F')
 
 def toBbox( rleObjs ):
     cdef RLEs Rs = _frString(rleObjs)
@@ -247,7 +363,7 @@ def toBbox( rleObjs ):
     shape[0] = <np.npy_intp> 4*n
     bb = np.array((1,4*n), dtype=np.double)
     bb = np.PyArray_SimpleNewFromData(1, shape, np.NPY_DOUBLE, _bb).reshape((n, 4))
-    PyArray_ENABLEFLAGS(bb, np.NPY_OWNDATA)
+    PyArray_ENABLEFLAGS(bb, np.NPY_ARRAY_OWNDATA)
     return bb
 
 def frBbox(np.ndarray[np.double_t, ndim=2] bb, siz h, siz w ):
